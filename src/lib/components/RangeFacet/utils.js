@@ -225,3 +225,12 @@ export const RANGE_MODES = Object.freeze({
   DEFAULT: "default",
   CUSTOM: "custom",
 });
+
+/**
+ * Value types for custom range filter inputs.
+ * @type {Object.<string, string>}
+ */
+export const VALUE_TYPES = Object.freeze({
+  DATE: "date",
+  INT: "int",
+});

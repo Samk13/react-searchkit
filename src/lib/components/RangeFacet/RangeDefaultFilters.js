@@ -123,13 +123,14 @@ const RangeDefaultFiltersElement = ({
       ranges={ranges}
       activeLabel={activeLabel}
     >
-      <List>
+      <>
         {ranges.map((range) => {
           const checked = activeLabel === range.label;
 
           return (
             <List.Item key={range.label}>
               <Checkbox
+                radio
                 label={range.label}
                 checked={checked}
                 onChange={() => onToggle(range, checked)}
@@ -137,7 +138,7 @@ const RangeDefaultFiltersElement = ({
             </List.Item>
           );
         })}
-      </List>
+      </>
     </Overridable>
   );
 };

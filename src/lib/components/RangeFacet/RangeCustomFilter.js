@@ -8,12 +8,32 @@
 
 import React from "react";
 import { DateTime } from "luxon";
-import { Checkbox, Button, Label } from "semantic-ui-react";
+import { Checkbox, Button, Input, Label, List } from "semantic-ui-react";
 import PropTypes from "prop-types";
 import Overridable from "react-overridable";
-import { RANGE_MODES, buildDateRange } from "./utils";
-import DateRangeInputs from "./DateRangeInputs";
+import { RANGE_MODES, VALUE_TYPES } from "./utils";
 import { AppContext } from "../ReactSearchKit";
+
+// Masked input formatters: strip non-digits and auto-insert separators.
+// As the user types, digits are reformatted on each keystroke:
+//   "2025" → "2025", "20250" → "2025-0", "202503" → "2025-03",
+//   "20250315" → "2025-03-15" (max 8 digits for dates).
+const FORMAT_FNS = {
+  [VALUE_TYPES.DATE]: (input) => {
+    const digits = input.replace(/\D/g, "").slice(0, 8);
+    if (digits.length <= 4) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+  },
+  [VALUE_TYPES.INT]: (input) => {
+    return input.replace(/\D/g, "");
+  },
+};
+
+const DEFAULT_HELP_TEXTS = {
+  [VALUE_TYPES.DATE]: "e.g. 2025 or 2025-03-15",
+  [VALUE_TYPES.INT]: null,
+};
 
 class RangeCustomFilter extends React.Component {
   constructor(props) {
@@ -22,14 +42,9 @@ class RangeCustomFilter extends React.Component {
 
     this.state = {
       checked: false,
-      expanded: false,
-      fromYear: value[0] ?? min,
-      toYear: value[1] ?? max,
-      fromMonth: null,
-      fromDay: null,
-      toMonth: null,
-      toDay: null,
-      dateError: null,
+      fromValue: String(value[0] ?? min),
+      toValue: String(value[1] ?? max),
+      error: null,
     };
   }
 
@@ -70,20 +85,15 @@ class RangeCustomFilter extends React.Component {
   clearState = () => {
     this.setState({
       checked: false,
-      expanded: false,
-      fromMonth: null,
-      fromDay: null,
-      toMonth: null,
-      toDay: null,
-      dateError: null,
+      error: null,
     });
   };
 
   syncActiveMode = () => {
     const { activeMode } = this.props;
-    const { checked, expanded } = this.state;
+    const { checked } = this.state;
 
-    if (activeMode !== RANGE_MODES.CUSTOM && (checked || expanded)) {
+    if (activeMode !== RANGE_MODES.CUSTOM && checked) {
       this.clearState();
     }
   };
@@ -91,12 +101,12 @@ class RangeCustomFilter extends React.Component {
   syncFromProps = () => {
     const { value, min, max, activeMode, activeFilter } = this.props;
 
-    // If custom mode is active and have a filter
+    // If custom mode is active and has a filter, keep the filter values
     if (activeMode === RANGE_MODES.CUSTOM && activeFilter) return;
 
     this.setState({
-      fromYear: String(value[0] ?? min),
-      toYear: String(value[1] ?? max),
+      fromValue: String(value[0] ?? min),
+      toValue: String(value[1] ?? max),
     });
   };
 
@@ -104,179 +114,235 @@ class RangeCustomFilter extends React.Component {
     const { activeMode, activeFilter, rangeSeparator } = this.props;
     if (activeMode !== RANGE_MODES.CUSTOM || !activeFilter) return;
 
-    const [fromPart, toPart] = activeFilter.split(rangeSeparator);
-    const parse = (value) => {
-      const dt = DateTime.fromISO(value);
-      if (!dt.isValid) return null;
-      return {
-        year: String(dt.year),
-        month: value.length >= 7 ? String(dt.month).padStart(2, "0") : null,
-        day: value.length >= 10 ? String(dt.day).padStart(2, "0") : null,
-      };
-    };
-
-    const from = parse(fromPart);
-    const to = parse(toPart);
-    if (!from || !to) return;
-    // Expand if there is more than year
-    const { expanded } = this.state;
-    const expand = expanded || from.month || from.day || to.month || to.day;
+    const parts = activeFilter.split(rangeSeparator);
+    if (parts.length < 2) return;
 
     this.setState({
       checked: true,
-      expanded: expand,
-      fromYear: from.year,
-      toYear: to.year,
-      fromMonth: from.month,
-      fromDay: from.day,
-      toMonth: to.month,
-      toDay: to.day,
-      dateError: null,
+      fromValue: parts[0].trim(),
+      toValue: parts[1].trim(),
+      error: null,
     });
   };
 
-  handleNumericChange = (value, field, maxLength) => {
-    if (value === null || new RegExp(`^\\d{0,${maxLength}}$`).test(value)) {
-      this.setState({ [field]: value, dateError: null });
+  formatValue = (input) => {
+    const { valueType } = this.props;
+    const fn = FORMAT_FNS[valueType] || FORMAT_FNS[VALUE_TYPES.DATE];
+    return fn(input);
+  };
+
+  handleChange = (field) => (e) => {
+    const formatted = this.formatValue(e.target.value);
+    this.setState({ [field]: formatted, error: null });
+  };
+
+  // Normalize a date value by zero-padding parts (e.g. "2025-3" → "2025-03")
+  normalizeValue = (value) => {
+    if (!value) return value;
+    const { valueType } = this.props;
+    if (valueType === VALUE_TYPES.INT) return value;
+    const parts = value.split("-");
+    return parts
+      .map((p, i) => (i === 0 ? p.padStart(4, "0") : p.padStart(2, "0")))
+      .join("-");
+  };
+
+  // Clicking into an input auto-activates the custom radio
+  activateOnFocus = () => {
+    const { checked } = this.state;
+    if (!checked) {
+      this.toggleChecked();
     }
   };
 
-  validateDates = () => {
-    const { min, max } = this.props;
-    const { fromYear, toYear, fromMonth, fromDay, toMonth, toDay } = this.state;
+  // Parse a date string (YYYY, YYYY-MM, or YYYY-MM-DD) into a DateTime.
+  // For partial dates, fills in start-of-period or end-of-period defaults.
+  parseDate = (value, isStart) => {
+    const parts = value.split("-").map(Number);
+    if (parts.length === 1) {
+      return DateTime.fromObject({
+        year: parts[0],
+        month: isStart ? 1 : 12,
+        day: isStart ? 1 : 31,
+      });
+    }
+    if (parts.length === 2) {
+      const dt = DateTime.fromObject({ year: parts[0], month: parts[1], day: 1 });
+      return isStart ? dt : dt.endOf("month");
+    }
+    return DateTime.fromObject({ year: parts[0], month: parts[1], day: parts[2] });
+  };
 
-    if (String(fromYear).length !== 4 || String(toYear).length !== 4) {
-      return this.setError("Year must be 4 digits");
+  parseValue = (value, isStart) => {
+    const { valueType } = this.props;
+    if (valueType === VALUE_TYPES.INT) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+    const dt = this.parseDate(value, isStart);
+    return dt?.isValid ? dt : null;
+  };
+
+  validate = () => {
+    const { fromValue, toValue } = this.state;
+    const { valueType } = this.props;
+    const isDate = valueType !== VALUE_TYPES.INT;
+
+    if (!fromValue && !toValue) {
+      return this.setError("Enter at least one value");
     }
 
-    const from = DateTime.fromObject({
-      year: Number(fromYear),
-      month: fromMonth ? Number(fromMonth) : 1,
-      day: fromDay ? Number(fromDay) : 1,
-    });
-
-    const toBase = DateTime.fromObject({
-      year: Number(toYear),
-      month: toMonth ? Number(toMonth) : 12,
-      day: 1,
-    });
-
-    const to = toDay ? toBase.set({ day: Number(toDay) }) : toBase.endOf("month");
-
-    if (!from.isValid || !to.isValid) {
-      return this.setError("Please enter a valid date");
-    }
-    if (from.year < min || from.year > max || to.year < min || to.year > max) {
-      return this.setError(`Year must be between ${min} and ${max}`);
+    if (fromValue) {
+      if (isDate && fromValue.length < 4) {
+        return this.setError("Year must be 4 digits");
+      }
+      const from = this.parseValue(fromValue, true);
+      if (from === null) {
+        return this.setError(isDate ? "Invalid date" : "Invalid number");
+      }
     }
 
-    if (from > to) {
-      return this.setError("Start date must be before end date");
+    if (toValue) {
+      if (isDate && toValue.length < 4) {
+        return this.setError("Year must be 4 digits");
+      }
+      const to = this.parseValue(toValue, false);
+      if (to === null) {
+        return this.setError(isDate ? "Invalid date" : "Invalid number");
+      }
     }
+
+    if (fromValue && toValue) {
+      const from = this.parseValue(fromValue, true);
+      const to = this.parseValue(toValue, false);
+      if (from > to) {
+        return this.setError("Start must be before end");
+      }
+    }
+
     return true;
   };
 
   setError = (error) => {
-    this.setState({ dateError: error });
+    this.setState({ error });
     return false;
   };
 
   applyRange = () => {
-    const { checked, fromYear, fromMonth, fromDay, toYear, toMonth, toDay } =
-      this.state;
-    const { rangeSeparator, onApply } = this.props;
+    const { checked, fromValue, toValue } = this.state;
+    const { rangeSeparator, onApply, activeFilter } = this.props;
 
-    if (!checked || !this.validateDates()) return;
+    if (!checked) return;
 
-    const dateRangeString = buildDateRange({
-      fromYear,
-      fromMonth,
-      fromDay,
-      toYear,
-      toMonth,
-      toDay,
-      rangeSeparator,
-    });
+    // Normalize to zero-padded ISO format (e.g. "2025-3" → "2025-03")
+    const normalizedFrom = this.normalizeValue(fromValue);
+    const normalizedTo = this.normalizeValue(toValue);
 
-    if (!dateRangeString) return;
+    // Skip if values haven't changed
+    const rangeString = `${normalizedFrom}${rangeSeparator}${normalizedTo}`;
+    if (rangeString === activeFilter) return;
 
-    const [fromISO, toISO] = dateRangeString.split(rangeSeparator);
-    onApply(
-      [DateTime.fromISO(fromISO).year, DateTime.fromISO(toISO).year],
-      dateRangeString
-    );
+    if (!this.validate()) return;
+
+    // Extract years for slider range; fall back to min/max for open-ended ranges
+    const { min, max } = this.props;
+    const fromYear = normalizedFrom ? parseInt(normalizedFrom.slice(0, 4), 10) : min;
+    const toYear = normalizedTo ? parseInt(normalizedTo.slice(0, 4), 10) : max;
+
+    onApply([fromYear, toYear], rangeString);
+  };
+
+  handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      this.applyRange();
+    }
   };
 
   toggleChecked = () => {
     const { checked } = this.state;
-    const { onClear } = this.props;
-    // Disable the custom filter and clear the filter
+    const { onClear, onActivate } = this.props;
+    // Disable the custom filter and clear the active filter
     if (checked) {
       this.clearState();
       onClear();
       return;
     }
     // Enable the custom filter
+    onActivate();
     this.setState({ checked: true });
   };
 
-  renderError = () => {
-    const { dateError } = this.state;
-    if (!dateError) return null;
-    return <Label basic color="red" size="tiny" content={dateError} />;
-  };
-
   render() {
-    const { checked, expanded, dateError } = this.state;
-    const { fromYear, fromMonth, fromDay, toYear, toMonth, toDay } = this.state;
+    const { checked, fromValue, toValue, error } = this.state;
     const {
       overridableId,
       activeFilter,
-      customDatesLabel,
       dateRangeToLabel,
-      datePlaceholders,
+      helpText,
+      valueType,
+      fromAriaLabel,
+      toAriaLabel,
+      applyAriaLabel,
+      customRangeAriaLabel,
     } = this.props;
     const { buildUID } = this.context;
+    const resolvedHelpText = helpText ?? DEFAULT_HELP_TEXTS[valueType];
 
     return (
       <Overridable
         id={buildUID("RangeFacet.CustomFilter.element", overridableId)}
         checked={checked}
-        expanded={expanded}
-        dateError={dateError}
+        error={error}
         activeFilter={activeFilter}
       >
-        <div className="searchkit-daterange-custom-filter">
-          <Checkbox checked={checked} onChange={this.toggleChecked} />
-
+        <List.Item className="searchkit-daterange-custom-item">
+          <Checkbox
+            radio
+            checked={checked}
+            onChange={this.toggleChecked}
+            aria-label={customRangeAriaLabel}
+          />
           <div className="searchkit-daterange-custom-body">
-            <DateRangeInputs
-              format={expanded ? "YYYY-MM-DD" : "YYYY"}
-              values={{ fromYear, fromMonth, fromDay, toYear, toMonth, toDay }}
-              disabled={!checked}
-              onPartChange={this.handleNumericChange}
-              onPartBlur={this.applyRange}
-              overridableId={overridableId}
-              toLabel={dateRangeToLabel}
-              placeholders={datePlaceholders}
-            />
-
-            {!expanded && (
+            <div className="searchkit-daterange-custom-filter">
+              <Input
+                size="mini"
+                value={fromValue}
+                onChange={this.handleChange("fromValue")}
+                onFocus={this.activateOnFocus}
+                onKeyDown={this.handleKeyDown}
+                inputMode="numeric"
+                dir="ltr"
+                error={!!error}
+                className="searchkit-daterange-masked-input"
+                aria-label={fromAriaLabel}
+              />
+              <span>{dateRangeToLabel}</span>
+              <Input
+                size="mini"
+                value={toValue}
+                onChange={this.handleChange("toValue")}
+                onFocus={this.activateOnFocus}
+                onKeyDown={this.handleKeyDown}
+                inputMode="numeric"
+                dir="ltr"
+                error={!!error}
+                className="searchkit-daterange-masked-input"
+                aria-label={toAriaLabel}
+              />
               <Button
                 type="button"
-                basic
+                primary
                 size="mini"
+                icon="search"
                 disabled={!checked}
-                onClick={() => this.setState({ expanded: true })}
-                className="searchkit-daterange-custom-toggle"
-              >
-                {customDatesLabel}
-              </Button>
-            )}
-
-            {this.renderError()}
+                onClick={this.applyRange}
+                aria-label={applyAriaLabel}
+              />
+            </div>
+            {resolvedHelpText && <label className="helptext">{resolvedHelpText}</label>}
+            {error && <Label basic color="red" size="tiny" content={error} />}
           </div>
-        </div>
+        </List.Item>
       </Overridable>
     );
   }
@@ -291,23 +357,28 @@ RangeCustomFilter.propTypes = {
   rangeSeparator: PropTypes.string.isRequired,
   onApply: PropTypes.func.isRequired,
   onClear: PropTypes.func.isRequired,
+  onActivate: PropTypes.func.isRequired,
   overridableId: PropTypes.string,
-  customDatesLabel: PropTypes.string,
   dateRangeToLabel: PropTypes.string,
-  datePlaceholders: PropTypes.shape({
-    YYYY: PropTypes.string,
-    MM: PropTypes.string,
-    DD: PropTypes.string,
-  }),
+  valueType: PropTypes.oneOf([VALUE_TYPES.DATE, VALUE_TYPES.INT]),
+  helpText: PropTypes.string,
+  fromAriaLabel: PropTypes.string,
+  toAriaLabel: PropTypes.string,
+  applyAriaLabel: PropTypes.string,
+  customRangeAriaLabel: PropTypes.string,
 };
 
 RangeCustomFilter.defaultProps = {
   activeMode: null,
   activeFilter: null,
   overridableId: "",
-  customDatesLabel: "Custom Dates",
   dateRangeToLabel: "to",
-  datePlaceholders: undefined,
+  valueType: VALUE_TYPES.DATE,
+  helpText: undefined,
+  fromAriaLabel: "From",
+  toAriaLabel: "To",
+  applyAriaLabel: "Apply custom range",
+  customRangeAriaLabel: "Custom range",
 };
 
 RangeCustomFilter.contextType = AppContext;

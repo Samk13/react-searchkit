@@ -193,7 +193,6 @@ export class App extends Component {
                     ]}
                     enableCustomRange
                     dateRangeToLabel="-"
-                    customDatesLabel="Choose dates"
                   />
                   <br />
                   <BucketAggregation

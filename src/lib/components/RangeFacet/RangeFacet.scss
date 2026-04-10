@@ -105,17 +105,38 @@
   fill: var(--footerLightColor, #0377cd);
 }
 
-.searchkit-daterange-custom-filter {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 8px;
+.ui.list > .item.searchkit-daterange-custom-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 .searchkit-daterange-custom-body {
+  flex: 1;
+  min-width: 0;
+
+  .helptext {
+    color: rgba(0, 0, 0, 0.4);
+    font-size: 0.85em;
+    display: block;
+    margin: 2px 0 0;
+    padding: 0;
+  }
+
+  .ui.label {
+    margin-top: 2px;
+  }
+}
+
+.searchkit-daterange-custom-filter {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
+}
+
+.searchkit-daterange-masked-input.ui.mini.input {
+  flex: 1;
+  min-width: 0;
 }
 
 .searchkit-daterange-inputs,
