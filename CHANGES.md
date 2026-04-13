@@ -1,5 +1,23 @@
 # Changes
 
+Version 3.2.0 (release 2026-04-13)
+
+- fix(RangeFacet): use Luxon for date validation
+- feat(RangeFacet): improve custom date filter UX
+    * Replace multi-input date fields with single masked inputs that
+      auto-format as YYYY, YYYY-MM, or YYYY-MM-DD
+    * Remove DateRangeInputs component (replaced by masked inputs)
+    * Add helptext hint below custom range inputs
+    * Add search icon button and Enter key to apply custom range
+    * Support open-ended ranges (empty lower or upper bound)
+    * Add input validation with error feedback on the inputs
+    * Change default filter checkboxes to radio buttons
+    * Add focus-to-activate behavior on custom range inputs
+    * Unify default and custom filters into a single radio group
+    * Add valueType prop ("date" or "int") for generic range support
+    * Export VALUE_TYPES from utils
+    * Remove unused customDatesLabel and datePlaceholders props
+
 Version 3.1.1 (released 2026-02-12)
 
 - fix: temporarily downgrade `luxon` to v1.x for compatibility with Invenio ecosystem
