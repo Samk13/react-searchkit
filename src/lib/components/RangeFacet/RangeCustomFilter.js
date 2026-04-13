@@ -155,22 +155,14 @@ class RangeCustomFilter extends React.Component {
     }
   };
 
-  // Parse a date string (YYYY, YYYY-MM, or YYYY-MM-DD) into a DateTime.
+  // Parse a normalized date string (YYYY, YYYY-MM, or YYYY-MM-DD) into a DateTime.
   // For partial dates, fills in start-of-period or end-of-period defaults.
   parseDate = (value, isStart) => {
-    const parts = value.split("-").map(Number);
-    if (parts.length === 1) {
-      return DateTime.fromObject({
-        year: parts[0],
-        month: isStart ? 1 : 12,
-        day: isStart ? 1 : 31,
-      });
-    }
-    if (parts.length === 2) {
-      const dt = DateTime.fromObject({ year: parts[0], month: parts[1], day: 1 });
-      return isStart ? dt : dt.endOf("month");
-    }
-    return DateTime.fromObject({ year: parts[0], month: parts[1], day: parts[2] });
+    const dt = DateTime.fromISO(value);
+    if (!dt.isValid) return dt;
+    if (value.length === 4) return isStart ? dt.startOf("year") : dt.endOf("year");
+    if (value.length === 7) return isStart ? dt.startOf("month") : dt.endOf("month");
+    return dt;
   };
 
   parseValue = (value, isStart) => {
@@ -183,8 +175,7 @@ class RangeCustomFilter extends React.Component {
     return dt?.isValid ? dt : null;
   };
 
-  validate = () => {
-    const { fromValue, toValue } = this.state;
+  validate = (fromValue, toValue) => {
     const { valueType } = this.props;
     const isDate = valueType !== VALUE_TYPES.INT;
 
@@ -242,7 +233,7 @@ class RangeCustomFilter extends React.Component {
     const rangeString = `${normalizedFrom}${rangeSeparator}${normalizedTo}`;
     if (rangeString === activeFilter) return;
 
-    if (!this.validate()) return;
+    if (!this.validate(normalizedFrom, normalizedTo)) return;
 
     // Extract years for slider range; fall back to min/max for open-ended ranges
     const { min, max } = this.props;
